@@ -599,6 +599,9 @@ function showStatus(client)
     msg += "</td><td><input type='button' onclick='UImedia("+client.index+");' value='Media' />";
     msg += "</td></tr></table>\n";
     f.innerHTML = msg;
+
+    f = document.getElementById("speechios");
+    f.style.display="block";
   }
 
 }

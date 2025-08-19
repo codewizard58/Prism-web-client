@@ -81,7 +81,7 @@ include("webrtc.js");
         that provides the Telnet and Web interfaces.
         </p>
         <input type='button' onclick='UIshowHide(0, "welcome-info");' value='Hide' />
-        <input type='button' onclick='UIspeechIOS();' value='Speech for iOS' />
+        <input type='button' onclick='UIspeechIOS();' value='Speech for iOS' id="speechios" style="display:none;" />
 
       </div>
     <div id='webprompt'  style="display:none;">
