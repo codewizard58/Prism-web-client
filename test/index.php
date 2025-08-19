@@ -1,6 +1,5 @@
 <?php
 
-
 function getValue($name, $def)
 { $ret = $def;
   if( isset($_GET[$name]) ){
@@ -17,6 +16,7 @@ $user = getValue("user", "");
 $pass = getValue("pass", "");
 $host = getValue("host", "");
 $speech = getValue("speech", "0");
+$game = getValue("game", "");
 
 ?>
 <script type='text/javascript' >
@@ -48,6 +48,8 @@ include("webrtc.js");
   <input id='defhost' value='<?php echo "$host"; ?>' />
    <?php }if( $speech != ""){ ?>
   <input id='defspeech' value='<?php echo "$speech"; ?>' />
+   <?php }if( $game != ""){ ?>
+  <input id='defsgame' value='<?php echo "$game"; ?>' />
   <?php } ?>
 </div>
 

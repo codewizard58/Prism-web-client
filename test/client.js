@@ -1,12 +1,13 @@
 // client
 
-let ver = 1.0;
+let ver = 1.1;
 // let wss = 'wss://moddersandrockers.com:4202';
 let HTTPS_PORT=4203;
 let WSS_PORT = 4202;
 let PRISM_PORT = 4201;
 
 let youtube="https://youtube.com/shorts/UHTcavXpMOM?feature=share";
+
 
 let LINESPERPAGE = 24;
 
@@ -18,6 +19,7 @@ let gameMode = 0;       // telnet, web, etc
 let style = 0;          // set by PHP 
 let user = "";
 let pass = "";
+let game = "";
 let host = wss;
 let rtcHost = rtcWss;
 let maxwidth=1000;    // initial width
@@ -25,6 +27,7 @@ const m68="MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
 let screenheight = window.innerHeight;
 let screenwidth = window.innerWidth;
 let doSpeech = false;
+let doSpeechSaved;
 let speech = null;
 let myVoice = null;
 
@@ -198,6 +201,14 @@ function prismObject(dbref, name, flags)
 
 }
 
+function textBlock( text, say)
+{ this.text = text;
+  this.say = say;
+  this.html = null;
+
+  // console.log("TB("+text+","+say+")");
+}
+
 function prismClient(addr, name)
 { this.websocket = null;
   this.output = name;
@@ -226,19 +237,21 @@ function prismClient(addr, name)
     let msg = "";
      let top = 0;
 
-    while( top < (16 -this.numHist) ){
-      msg += "<br />\n";
+    while( top < (LINESPERPAGE -this.numHist) ){
+      msg += "<br /> <!-- "+top+" --> \n";
       top ++;
     }
   //  msg += "Lines="+numHist+"<br />";
     for(let h = this.htail; h != null; h = h.next){
+      msg += "<!-- "+top+" / "+this.numHist+" --> \n";
       msg += h.msg;
+      top++;
     }
     f.innerHTML = msg;
 
   }
 
-  // text to user
+  // text or html to user
   this.outText = function(msg)
   {
     if( this.numHist < LINESPERPAGE){
@@ -264,27 +277,51 @@ function prismClient(addr, name)
     this.showHistory();
   }
 
+  this.sendHtmlToUser = function(msg)
+  {
+    this.outText(msg);
+  }
 
   // text display. to user
-  this.sendToUser = function(msg, id, whisper) 
+  // not HTML
+  // two streams, text and speech
+  //
+  this.sendToUser = function(msg, raw, whisper) 
   {
     let lines = msg.split(/\r\n|\r|\n/g);
     let msgx = "";
-    let ocnt = 0;
+    let say = "";
+    let tb = null;
 
     for(let i = 0; i < lines.length; i++){
       if( this.index >= 0){
-        msgx = parse(lines[i], this.index);
+        tb = parse(lines[i], this.index, raw);
+        if( tb == null){
+          continue;
+        }
+        if( doSpeech){
+          say = tb.say+" ";
+        }
+        msgx = tb.text;
       }else {
-        msgx = msg;
+        msgx = lines[n];
       }
-      if( msgx != ""){
-        ocnt ++;
-        this.outText(msgx+"<br />");
+      console.log("STU("+msgx+","+say+","+tb.html+")");
+      // process text
+      if( tb.html != null){
+        this.outText(tb.html);
+      }else {
+        if( msgx != "" && msgx != null){
+          let mlines = msgx.split(/\r\n|\r|\n/g);
+          for(let n=0; n < mlines.length; n++){
+            this.outText(mlines[n]+"<br />");
+          }
+        }
       }
-    }
-    if( speech != null && ocnt > 0 && whisper && doSpeech){
-      speak(msg);
+      // process speech
+      if( speech != null && say != "" && say != null && whisper && doSpeech){
+        speak(say);
+      }
     }
 
   }
@@ -299,7 +336,7 @@ function prismClient(addr, name)
       this.webSocket = new WebSocket( this.host );
       this.webSocket._client = this;
 
-      this.sendToUser( "<p>Connecting to "+this.host+"</p>", null, false);
+      this.sendHtmlToUser( "<p>Connecting to "+this.host+"</p>");
 
       this.webSocket.onopen = function() 
       {
@@ -311,13 +348,13 @@ function prismClient(addr, name)
         let client = this._client;
 
         if( typeof msg.data == 'string'){
-            client.sendToUser( data , null, true);
+            client.sendToUser( data , false, true);
 //            console.log("message1 "+data);
             return;
         }
         data = msg.data.text();
         data.then(( value)=>{
-            client.sendToUser( value  , null, true);
+            client.sendToUser( value  , false, true);
 //            console.log("message2 "+value);
         });
       }
@@ -325,12 +362,12 @@ function prismClient(addr, name)
       this.webSocket.onclose = function() 
       {
         let client = this._client;
-        client.sendToUser( '<p>Disconnected '+client.output+'</p>' , null, false);
+        client.sendHtmlToUser( '<p>Disconnected '+client.output+'</p>' );
       }
     } 
     catch( exception ) 
     {
-        this.sendToUser( '<p>Error ' + exception + '.</p>' , null, false);
+        this.sendHtmlToUser( '<p>Error ' + exception + '.</p>' );
     }
 
   let f = document.getElementById(this.output+'_chatText');
@@ -385,27 +422,23 @@ function UIcmd(cindex, cmd, arg1, arg2){
   UIsendCmd(msg, cindex, 0, -1);
 }
 
-function toHTML(msg)
+function toHTML(msg, raw)
 { let n;
-    // replace leading spaces with non breaking spaces
+
+  let msgx = "";
+
+  if( raw){
+    return msg;
+  }
+    // replace spaces with non breaking spaces
   for( n=0; n < msg.length; n++){
     if( msg[n] != ' '){
-      break;
+      msgx += msg[n];
+    }else {
+      msgx += "&nbsp;";
     }
   }
-  if( n > 0){
-    let msgr = msg.substr(n);
-    let msgx = "";
-    while(n > 0){
-      msgx+= "&nbsp;";
-      n--;
-    }
-    msg = msgx+msgr;
-
-  }
-
-  return msg;
-
+  return msgx;
 }
 
 function UIwebaction(action)
@@ -523,6 +556,7 @@ function UIspeechIOS()
 
 }
 
+
 function UIspeech(mode)
 {
   if( mode == 1){
@@ -569,36 +603,277 @@ function showStatus(client)
 
 }
 
+function xtmp()
+{
+
+}
+
+let editMatch= ["Conten", "You are carrying:", "edit_e", "edit_r", "edit_t", "Owner:", "Class:", "Zone: ", "Locati", "Exits:"];
+let scoreMatch = [6, "Hello $user", 9, "You have $pennies pennies",
+   6, "Level $level", 6, "Title $title", 
+   6, "Chp = $chp", 6, "Mhp = $mhp", 
+   11, "You are in $location", 0, null, 6, "You fe", 6, "You co" , 6, "You wi" , 6, "You ca" , 0, null];
+let lineMatch = [0, null];
+
+function noAction(m, len, pat)
+{
+  return null;
+}
+
+function scoreAction(client, m, len, arg, pat)
+{ 
+  if( len == 0){
+    return null;
+  }
+  console.log("Score action["+m.pos+"] "+arg+"/"+pat);
+
+  pats = pat.split(" ");
+  args = arg.split(" ");
+  for(let n=0; n < pats.length; n++){
+    if( pats[n][0] == '$'){
+      let name = pats[n].substr(1);
+      console.log("  action "+pats[n]+"/"+args[n]);
+      if( name == "user"){
+        client.user = args[n];
+      }else if( name == "pennies"){
+        client.pennies = args[n];
+      }else if( name == "level"){
+        client.level = args[n];
+      }else if( name == "title"){
+        client.title = args[n];
+      }else if( name == "chp"){
+        client.chp = args[n];
+      }else if( name == "mhp"){
+        client.mhp = args[n];
+      }else if( name == "location"){
+        client.location = arg;
+
+        // show status
+        showStatus( client);
+        showHide(1, client.output+"_status");
+      }
+    }
+  }
+  return null;
+}
+
+function getAction(client, m, len, arg, pat)
+{ let tb = null;
+
+  console.log("getAction "+len+" "+arg);
+  addMatcher(client, m.name);   // queue another one.
+  tb = new textBlock(" "+arg, arg);
+  tb.html = "&nbsp;"+makeCmd(arg, client.index, "get ", -1)+"<br />";
+  return tb;
+
+}
+
+function dropAction(client, m, len, arg, pat)
+{ let tb = null;
+
+  console.log("getAction "+len+" "+arg);
+  addMatcher(client, m.name);   // queue another one.
+  tb = new textBlock(" "+arg, arg);
+  tb.html = "&nbsp;"+makeCmd(arg, client.index, "drop ", -1)+"<br />";
+  return tb;
+}
+
+
+function matchObject()
+{
+  this.name = "";
+  this.next = null;
+  this.prev = null;
+  this.state = null;
+  this.match = null;
+  this.pos = null;
+  this.action = noAction();
+  this.indented = false;
+
+}
+
+let matchList = null;
+
+function unlinkMatch(m)
+{
+  if( m == null){
+    return;
+  }
+  if( m.next != null){
+    m.next.prev = m.prev;
+  }
+  if( m.prev != null){
+    m.prev.next = m.next;
+  }
+  if( matchList == m){
+    matchList = m.prev;
+  }
+  m.next = null;
+  m.prev = null;
+}
+
+
+// return textBlock
+
+function matcher(client, msg)
+{ let m = matchList;
+  let indent = false;
+  let tb = null;
+  let msgx = "";
+
+  if( m == null){
+    console.log("not matching");
+    tb = new textBlock(msg, msg);
+    return tb;
+  }
+  console.log("M("+m.name+")"+msg);
+
+  let ws = 0;
+  while( msg[ws] == ' '){
+    ws++;
+    indent = true;
+  }
+  if( ws > 0){
+    msgx = msg.substr(ws);   // remove leading ws
+    console.log(m.name+" "+"WS["+ws+"] "+msg);
+  }else {
+    msgx = msg;
+  }
+  if( m.indented && !indent){
+    // end of match
+    console.log(m.name+" "+"End of match");
+    unlinkMatch(m);
+    tb = new textBlock(msg, msg);
+    return tb;
+  }
+
+  let fields = msg.split(",");
+  
+  if( fields.length > 1){
+    tb = matcher(client, fields[0]);
+  }else while( m != null){
+    let pos = m.pos;
+    let plen = m.match[pos];
+    let mpat = m.match[pos + 1];
+
+    if( plen == 0){
+      // end of match;
+      let ret = m.action(client, m, 0, msg, null);
+      // unlink
+      console.log("matcher["+m.name+"]: "+msg+"///"+ret);
+      unlinkMatch(m);
+
+      return ret;
+    }
+    let pref = msgx.substr(0, plen);
+    let mpref= mpat.substr(0, plen);
+
+    if( pref == mpref){
+      // matched
+      let ret = m.action(client, m, plen, msg.substr(plen), mpat.substr(plen));
+      m.pos += 2;
+      console.log("matcher2["+m.name+"]: "+msg+"///"+ret);
+      return ret;
+    }
+
+    m = m.next;
+  }
+  // no match
+  console.log("M no match");
+  if( tb == null){
+    tb = new textBlock(msg, msg);
+  }else {
+    tb.text += msg;
+    tb.say += msg;
+  }
+  if( fields.length > 1){
+    let tb2 = matcher(client, fields[1]);
+    if( tb2 == null){
+      console.log("Matcher return tb");
+      return tb;
+    }
+    if( tb == null){
+      console.log("Matcher return tb2");
+      return tb2;
+    }
+    tb.text += ','+tb2.text;
+    tb.say += tb2.say;
+  }
+  return tb;
+}
+
+function addMatcher(client, match)
+{ let mobj = null;
+
+  console.log("Addmatcher["+client.pstate+"]: "+match);
+  if( match == "score"){
+    mobj = new matchObject();
+    mobj.name = match;
+    mobj.match = scoreMatch;
+    mobj.pos = 0;
+    mobj.action = scoreAction;
+  }else if( match == "Contents:"){
+    mobj = new matchObject(); 
+    mobj.name = match;
+    mobj.match = lineMatch;   
+    mobj.pos = 0;
+    mobj.action = getAction;
+    mobj.indented = true;     // stop if not indented.
+  }else if( match == "You are carrying:"){
+    mobj = new matchObject(); 
+    mobj.name = match;
+    mobj.match = lineMatch;   
+    mobj.pos = 0;
+    mobj.action = dropAction;
+    mobj.indented = true;     // stop if not indented.
+  }
+
+  if( mobj != null){
+    mobj.prev = matchList;
+    if( matchList != null){
+      matchList.next = mobj;
+    }
+    matchList = mobj;
+  }
+}
+
+// parse the data received from the game.
 // COnnect guest adventure
 // common to all client instances
+// add matchers for
 // Contents:
 // You are carrying:
 // does a lot of stuff for editing objects
+//
+// return of null means ignore this data.
+// return of "" means use original 
+// return of other is display other, do not speak other
 
-function parse(msg, cindex)
+function parse(msg, cindex, raw)
 {
   let pref = msg.substr(0, 6);
   const client= clients[cindex];
   let n = 0;    // used to skip/count spaces etc
-  let msgx;
+  let tb = null;
 
   if( msg.length == 0){
-    return '';
+    return null;
   }
 
 //  console.log("Pref='"+pref+"'");
 
   if(pref == "No mul"){
-      showHide(0, "welcome");
-      showHide(1, client.output);
-      showHide(1, client.output+"_chatInput");
+    showHide(0, "welcome");
+    showHide(1, client.output);
+    showHide(1, client.output+"_chatInput");
 //      console.log("No mux for "+client.output);
-      return "No multiplexors available, try again in a few minutes\r\n";
+    tb = new textBlock("No multiplexors available, try again in a few minutes\r\n", "");
+    return tb;
   }
 
   // just throw @PING
   if( pref == "@PING"){
-    return "";
+    return null;
   }
 
   if( client.pstate == 0){          // login state
@@ -607,10 +882,10 @@ function parse(msg, cindex)
       showHide(1, client.output+"_chatText");
       showHide(0, client.output+"_chatInput");
       console.log("@RQV");
-
+      UIsendCmd("@WEB", client.index, 0, -1);
       client.prompt = "";
 
-      return "";
+      return null;
     }
 
     client.prompt += msg+"\r\n";
@@ -629,12 +904,12 @@ function parse(msg, cindex)
         UIsendCmd("co "+user+" "+pass, client.index, 0, -1);
         user = "";
         pass = "";
-        return "";
+        return null;
       }else if( gameMode != 1){       // no auto login 
         showHide(1, client.output);
         showHide(1, client.output+"_chatInput");
         client.pstate = 1;      // not web mode so display prompt
-        client.sendToUser(client.prompt, null, false); // will parse the prompt again.
+        client.sendToUser(client.prompt, true, false); // will parse the prompt again.
       }
       // 
       if( gameMode == 1){
@@ -646,173 +921,52 @@ function parse(msg, cindex)
     if(pref == "@PRISM"){
       client.pstate = 1;
       console.log("@PRISM");
-      return "";
+      return null;
     }
-    return "";
+    return null;
   }
 
-
-
-  if( client.pstate == 1 || client.pstate == 4 ){
-//    console.log(client.pstate+"/"+editMode+"  '"+pref+"' ");
-    if(pref == "Conten"){
-      client.pstate = 2;    // get ...
-    }else if( msg == "You are carrying:"){
-      console.log("Inventory");
-      client.pstate = 3;    // drop ...
-    }else if( pref == "edit_e"){
-        editor(cindex, msg);
-        client.pstate = 1;
-    }else if( pref == "edit_r"){
-        editor(cindex, msg);
-        client.pstate = 1;
-    }else if( pref == "edit_t"){
-        editor(cindex, msg);
-        client.pstate = 1;
-    }else if( pref == "Owner:"){
-      if(editMode == 2){
-          examine(cindex, "owner", msg);
-      }
-      client.pstate = 1;
-    }else if( pref == "Class:"){
-      if(editMode == 2){
-        examine(cindex, "class", msg);
-      }
-      client.pstate = 1;
-    }else if( pref == "Zone: "){
-      if(editMode == 2){
-        examine(cindex, "zone", msg);
-      }
-      client.pstate = 1;
-    }else if( pref == "Locati"){
-      if(editMode == 2){
-        examine(cindex, "location", msg);
-      }
-      client.pstate = 1;
-    }else if( pref == "Exits:"){
-      if(editMode == 2){
-        client.pstate = 4;
-      }else {
-        client.pstate = 1;
-      }
-    }else if( (client.flags & 3) == 1){     // sent score
-      if( pref == "Hello "){
-        if( msg.length > 6){
-          client.user = msg.substr(6);
-          client.flags |= 2;                // seen Hello
-          console.log("score: user="+client.user+" flags="+client.flags);
-          if( (client.flags & 4) == 4){
-            return "";
-          }
-        }
-      }
-    }else if( (client.flags & 3) == 3){     // After Hello
-      console.log("Score: flags="+client.flags);
-      if( pref == "You ha"){
-        if( msg.length > 9){
-          client.pennies = msg.substr(9);
-          console.log("score: pennies="+client.pennies);
-        }
-        if( (client.flags & 4) == 4){
-          return "";
-        }
-      }else if( pref == "Level "){
-        if( msg.length > 6){
-          client.level = msg.substr(6);
-          console.log("score: level="+client.levels);
-        }
-        if( (client.flags & 4) == 4){
-          return "";
-        }
-      }else if( pref == "Chp = "){
-        if( msg.length > 6){
-          client.chp = msg.substr(6);
-          console.log("score: chp="+client.chp);
-        }
-        if( (client.flags & 4) == 4){
-          return "";
-        }
-      }else if( pref == "You ar"){
-        if( msg.length > 11){
-          client.location = msg.substr(11);
-          console.log("score: location="+client.location);
-        }
-        if( (client.flags & 4) == 4){
-          return "";
-        }
-      }else if( pref == "You fe"){        // you feel
-        if( (client.flags & 4) == 4){
-          return "";
-        }
-      }else if( pref == "You co" || pref == "You wi" || pref == "You ca"){        // you could/will/can
-        showHide(1, client.output+"_status");
-        showStatus(client);
-        if( (client.flags & 4) == 4){
-          client.flags &= 0xfff8;     // clear bits 0,1,2
-          return "";
-        }
-        client.flags &= 0xfff8;     // clear bits 0,1,2
-    }else {
-        // end of sequence so reset and show
-          showHide(1, client.output+"_status");
-          showStatus(client);
-          client.flags &= 0xfff8;     // clear bits 0,1,2
-      }
-
-    }else {
-        console.log("Flags "+client.flags);
-    }
-    // if in state 4 then processing exits
-    if( client.pstate == 4){
-      // maybe an exit
+  if( client.pstate == 1 ){
+    console.log("Parse '"+msg+"'");
+    tb = matcher(client, msg);
+    if( tb == null){
+      console.log("matcher == null");
+      return null;
     }
 
-  }else if( client.pstate == 2 || client.pstate == 3){    // Content: / Inventory
-    console.log(client.pstate+" '"+msg[0]+"' "+msg.length);
-    if(msg[0] != ' '){
-      client.pstate = 1;    // end of content
-    }else {
-      for( n=0; n < msg.length; n++){
-        if( msg[n] != ' '){
-          break;
+
+    if( msg.substr(0, 9) == "Contents:" ){
+      addMatcher(client, "Contents:");
+    }else if( msg.substr(0, 17) == "You are carrying:" ){
+      addMatcher(client, "You are carrying:");
+    }else if( msg.substr(0, 7) == "@SPEECH"){
+      console.log("SPK: "+msg);
+      let args=msg.split(" ");
+      if( args.length > 1){
+        if( args[1] == 4){
+          doSpeech = doSpeechSaved;
+        }else if( args[1] == 5){
+          doSpeechSaved = doSpeech;
+          doSpeech = false;
         }
+        console.log("dospeech "+doSpeech);
       }
-      let obj = msg.substr(n);
-      let ref = obj.indexOf("(#");
-      if(ref >= 0){
-        obj = obj.substr(0, ref);
-      }
-      msgx= "";
-      while(n > 0){
-        msgx+= "&nbsp;";
-        n--;
-      }
-//      console.log("Content "+obj);
-      if( client.pstate == 2){
-        return msgx+makeCmd(obj, cindex, "get ", -1);
-      }else if( client.pstate == 3){
-        return msgx+makeCmd(obj, cindex, "drop ", -1);
-      }
+      return null;
     }
-  }else if( client.pstate == 4){ 
-    // exits
+    if( tb != null){
+          console.log("Parse(Text:"+tb.text+", Say:"+tb.say+")");
+    }
+    return tb;
+  
   }
+
   let obj  = parseDBrefs(msg, cindex);
   if( obj != null){
     msg = obj.name+" "+makeCmd("#"+obj.dbref, cindex, "@ex ", -1);
-    if(editMode == 1){
-      editMode = 0;
-      // first after @ex ...
-      let otype = obj.flags[0];
-      if( otype == 'R' || otype == 'P' || otype == 'C'){
-        editMode = 2;     // look for owner
-        client.pObj = obj;
-      }
-    
-    }
+    raw = true;
   }
 
-  return toHTML(msg);
+  return toHTML(msg, raw);
 }
 
 
@@ -843,7 +997,7 @@ function UIsendCmd(cmd, cindex, show, obj)
 //  f = document.getElementById(client.output+"_edit");
   let pref = cmd.substr(0, 4);
   if( pref == "@ex "){
-    editMode = 1;
+    addMatcher(client, "@ex");
   }
   client.curobj = obj;
   if( obj != -1){
@@ -860,14 +1014,14 @@ function UIsendCmd(cmd, cindex, show, obj)
   if( pref == "@COMPASS"){
     showHide(2, "compass");
     if( show == 1){ 
-      client.sendToUser( makeCmd(cmd, cindex, "", -1) , null, false);
+      client.sendHtmlToUser( makeCmd(cmd, cindex, "", -1) );
     }
     return;
   }
   
   if( pref == "@SPEECH"){
     if( speech == null){
-      return;
+      return;     // do nothing
     }
     f = document.getElementById("speech");    // the div
     doSpeech = !doSpeech;
@@ -892,7 +1046,7 @@ function UIsendCmd(cmd, cindex, show, obj)
       showHide(0, "webrtc");    // hide
     }
     if( show == 1){ 
-      client.sendToUser( makeCmd(cmd, cindex, "", -1), null, false );
+      client.sendHtmlToUser( makeCmd(cmd, cindex, "", -1) );
     }
     return;
   }
@@ -907,7 +1061,7 @@ function UIsendCmd(cmd, cindex, show, obj)
         client.user = tokens[1];
         console.log("User: "+client.user);
         cmd += "\nscore";
-        client.flags |= 5;      // score sent
+        addMatcher(client, "score");
       }else {
         console.log("Second login "+tokens[1]+" "+client.user);
         return;
@@ -915,19 +1069,21 @@ function UIsendCmd(cmd, cindex, show, obj)
     }
   }else if( tokens.length > 0){
     if( tokens[0] == "score"){
-      client.flags |= 1;      // score sent
       console.log("Score "+client.flags);
+      addMatcher(client, "score");
     }
   }
 
   if( client.isConnectedWsChat() ) {
+    if( show == 1){
+      let ucmd = makeCmd(cmd, cindex, "", -1);
+      console.log("UCMD: "+ucmd);
+      client.outText( ucmd+"<br />");
+    }
     try{
       client.webSocket.send(  cmd+"\n" );
-      if( show == 1){ 
-        client.sendToUser( makeCmd(cmd, cindex, "", -1) , null, false);
-      }
     } catch( exception ){
-      client.sendToUser( '<p>Error: '+exception+'</p>' , null, false);
+      client.sendHtmlToUser( '<p>Error: '+exception+'</p>' );
     }
   }
 
@@ -1018,6 +1174,7 @@ function onPageLoaded()
   if( s == '1'){
     doSpeech = true;
   }
+  game = getValue('defgame', "");
 
   // look for chat clients
   for(let n=0; n < 4; n++){
